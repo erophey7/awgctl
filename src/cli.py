@@ -127,7 +127,7 @@ def build_parser():
         "add", parents=[restart_opt], formatter_class=_RAW,
         help=_t("add_help"), description=_t("add_desc"),
         epilog=_t("add_epilog"))
-    sp.add_argument("name", help=_t("help_name"))
+    sp.add_argument("names", nargs="+", metavar="NAME", help=_t("help_name"))
     sp.add_argument("--client-allow", default=None, help=_t("help_client_allow"))
     sp.add_argument("--client-routes", default=None, help=_t("help_client_routes"))
     sp.add_argument("--keepalive", type=int, default=None, help=_t("help_keepalive"))
@@ -139,7 +139,9 @@ def build_parser():
         "del", parents=[restart_opt], formatter_class=_RAW,
         help=_t("del_help"), description=_t("del_desc"),
         epilog=_t("del_epilog"))
-    sp.add_argument("name", help=_t("help_name"))
+    sp.add_argument("names", nargs="*", metavar="NAME", help=_t("help_names"))
+    sp.add_argument("--all", dest="all_clients", action="store_true",
+                    help=_t("help_all"))
 
     sp = sub.add_parser(
         "get", formatter_class=_RAW, help=_t("get_help"),
@@ -151,7 +153,9 @@ def build_parser():
         "rekey", parents=[restart_opt], formatter_class=_RAW,
         help=_t("rekey_help"), description=_t("rekey_desc"),
         epilog=_t("rekey_epilog"))
-    sp.add_argument("name", help=_t("help_name"))
+    sp.add_argument("names", nargs="*", metavar="NAME", help=_t("help_names"))
+    sp.add_argument("--all", dest="all_clients", action="store_true",
+                    help=_t("help_all"))
 
     sp = sub.add_parser(
         "set", parents=[restart_opt], formatter_class=_RAW,
@@ -255,15 +259,21 @@ def main():
     elif cmd == "list":
         cmd_list(args.config, json_out=args.json)
     elif cmd == "add":
-        cmd_add(args.config, args.name, allow=args.client_allow,
+        cmd_add(args.config, args.names, allow=args.client_allow,
                 routes=args.client_routes, keepalive=args.keepalive,
                 endpoint=args.endpoint, dns=args.dns, json_out=args.json)
     elif cmd == "del":
-        cmd_del(args.config, args.name)
+        if not args.names and not args.all_clients:
+            print(_t("err_no_names"), file=sys.stderr)
+            sys.exit(2)
+        cmd_del(args.config, args.names, all_clients=args.all_clients)
     elif cmd == "get":
         cmd_get(args.config, args.name, json_out=args.json)
     elif cmd == "rekey":
-        cmd_rekey(args.config, args.name)
+        if not args.names and not args.all_clients:
+            print(_t("err_no_names"), file=sys.stderr)
+            sys.exit(2)
+        cmd_rekey(args.config, args.names, all_clients=args.all_clients)
     elif cmd == "set":
         changes = {k: getattr(args, k) for k in CLIENT_PARAMS
                    if getattr(args, k) is not None}

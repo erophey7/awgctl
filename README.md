@@ -1,219 +1,160 @@
-### awgctl.py
+# awgctl
 
-```
-awgctl.py <config> <команда> [аргументы] [опции]
-```
+AmneziaWG client management utility. Developed as modules (`src/`) with localization (`lang/`), but shipped as a **single self-contained file** (stdlib only), built from sources.
 
-`<config>` — путь до конфига **или** короткое имя: `awg0` разворачивается в
-`/etc/amnezia/amneziawg/awg0.conf` (расширение `.conf` добавляется само).
-Например: `awgctl.py awg0 list`, `awgctl.py awg0 add ivan`.
+## Build and Installation
 
-Команды в стиле `ip` — сокращаются до любого однозначного префикса
-(`a`=add, `g`=get, `l`=list, `i`=init; для `d`-/`r`-/`s`-команд нужен
-различающий префикс: `del`/`def`=defaults, `res`=restart, `rek`=rekey,
-`se`=set, `sh`=show):
+Build requirements: `python3` and `make`. No external dependencies.
 
-Подробный help по команде — `awgctl.py <команда> -h` (config можно опустить,
-напр. `awgctl.py add -h`).
-
-- `init [--host=<host>] [-y] [--rekey-imported]` — разметить серверный
-  конфиг **и импортировать существующие `[Peer]`** под управление.
-  - Роль определяется по `ListenPort` в `[Interface]` (сервер даже без
-    клиентов); клиентский конфиг (без `ListenPort`) отклоняется.
-  - Имена берутся из `# BEGIN <name>` / `#_Name = <name>` или
-    автогенерируются из IP; интерактивно подтверждаются/меняются
-    (`-y`/`--yes` — принять авто-имена без вопросов).
-  - Вырожденные peer'ы (gateway `/16`, site-to-site с `Endpoint`, без
-    `AllowedIPs`) адоптируются **как есть** с предупреждением; исходные
-    функциональные поля (`AdvancedSecurity`, `Endpoint`, `PresharedKey`)
-    сохраняются, служебные `#_`-комментарии вычищаются.
-  - `#_PrivateKey` (формат Amnezia desktop) забирается → клиент сразу
-    полностью управляем. Остальным без приватного ключа предлагается
-    `rekey` (`--rekey-imported` — сразу, без вопроса).
-  - Повторный `init` на уже размеченном конфиге лишь обновляет host по
-    `--host`, клиентов не трогает.
-  - `--dry` (`--dry-run`) — **предпросмотр**: показывает роль конфига,
-    состояние разметки и по каждому `[Peer]` — предложенное имя (из конфига
-    или автоген), тип, распарсенные поля (`PublicKey`/`AllowedIPs`/`Endpoint`/
-    `PSK`/`PrivateKey`) и замечания (без `PublicKey`, вырожденный тип, нет
-    `client_priv`). Ничего не пишет и не берёт блокировку.
-- `list [--json]` — список клиентов. `--json` выводит машинно-читаемый
-  массив (поля `name/ip/allow/routes/endpoint/keepalive/client_pub` +
-  булевы `has_client_priv`/`has_psk`); секреты (приватные ключи, PSK) не
-  выводятся.
-- `add <name>` — добавить клиента: генерирует ключи, вычисляет
-  публичный ключ сервера из его PrivateKey, назначает следующий свободный
-  IP, выводит клиентский конфиг в stdout и пишет `[Peer]`+разметку в конфиг.
-  - `--client-allow=<cidr>` — AllowedIPs в СЕРВЕРНОМ `[Peer]` (сети за
-    клиентом — для VPN-gateway), по умолчанию `IP клиента/32`.
-  - `--client-routes=<cidr>` — AllowedIPs в КЛИЕНТСКОМ конфиге (что клиент
-    гонит через VPN), по умолчанию — из дефолтов конфига (`defaults`).
-  - `--keepalive=<n>` — PersistentKeepalive (в клиентском конфиге),
-    по умолчанию — из дефолтов конфига.
-  - `--dns=<list>` — DNS клиента, по умолчанию — из дефолтов конфига.
-  - `--endpoint=<host:port>` — кастомный endpoint клиента (полный host:port,
-    фиксируется у клиента). Если не указан — endpoint **динамический**:
-    при каждой выдаче строится из дефолтного host в секции + актуального
-    `ListenPort` сервера.
-  - `--ssh=<host>` — генерировать ключи на root@HOST, если локально нет
-    `awg`/`wg`.
-- `del <name>` — удалить клиента (и его `[Peer]`).
-- `get <name>` — вывести сохранённый клиентский конфиг в stdout. Если
-  `client_priv` отсутствует (импорт без приватного ключа), предупреждает и
-  выводит неполный конфиг — нужен `rekey`.
-- `rekey <name> [--ssh=<host>]` — ротация ключей клиента (новая пара +
-  PSK, обновление `[Peer]` и меты). Меняет ключи — клиенту нужно раздать
-  новый конфиг. Делает импортированного без ключа полностью управляемым.
-- `set <name...> | --all [опции]` — изменить параметры существующих
-  клиентов **без ротации ключей**, с поддержкой **bulk** (несколько имён
-  или `--all`):
-  - `--dns=<list>`, `--routes=<cidr>`, `--keepalive=<n>`,
-    `--host=<host>`, `--endpoint=<host:port>` — влияют только на
-    выдаваемый клиентский конфиг (`get`);
-  - `--allow=<cidr>` — меняет **серверный** `AllowedIPs` в `[Peer]` (и мету).
-  - Приоритет endpoint у клиента: `--endpoint` (полный `host:port`) >
-    per-client `--host` (host:ListenPort) > дефолтный `host` конфига.
-  - После изменения раздайте затронутым клиентам новый конфиг (`get <имя>`).
-  - `set --defaults [--host= --dns= --routes= --keepalive=]` — изменить не
-    клиентов, а **дефолты конфига** (эквивалент команды `defaults`; имена/
-    `--all`/`--endpoint`/`--allow` тут недопустимы).
-- `defaults [--host= --dns= --routes= --keepalive=]` — показать (без флагов)
-  или изменить дефолты параметров клиента. `host` хранится строкой
-  `# AWGCTL-HOST` (то же, что `init --host`), `dns/routes/keepalive` —
-  строкой `# AWGCTL-DEFAULTS`; подставляются в `add`, когда соответствующий
-  флаг не задан. Дефолты заполняют только **пустые** поля клиента (у
-  импортированных `keepalive`/`routes` уже проставлены — для их массовой
-  смены есть `set --all`).
-- `show [--json]` — **живой статус** туннеля из `awg show <iface> dump`:
-  по каждому клиенту имя (сопоставляется по публичному ключу из зоны
-  AWGCTL), время последнего handshake, принято/передано, endpoint. Нужен
-  запущенный интерфейс и root (локально) или `--ssh --sudo`.
-- `restart` — перезапустить туннель локально через `awg-quick` (если
-  интерфейс запущен).
-
-`--json` есть также у `add`, `get` и `init --dry` — машинный вывод
-(у `add`/`get` объект содержит поля клиента и готовый `config` строкой;
-`init --dry --json` — структурированный разбор).
-
-Флаг `-r | --restart` у `init`/`add`/`del`/`rekey` перезапускает туннель
-сразу после операции (например `awgctl.py awg0.conf add ivan -r`).
-
-### Обзор конфигов (`configs`)
-
-Глобальная команда — **не привязана к одному конфигу** (config-слот не нужен),
-пишется первым аргументом:
-
-```
-awgctl.py configs [КАТАЛОГ] [--json] [--ssh ... --sudo]
+```bash
+make                     # build build/awgctl (default language — en)
+make AWGCTL_LANG=ru      # build Russian version
 ```
 
-Показывает все `*.conf` в каталоге (по умолчанию `/etc/amnezia/amneziawg`,
-или указанный `КАТАЛОГ`) с классификацией каждого:
+The variable is named **`AWGCTL_LANG`**, not `LANG`, so it doesn't override the standard shell `LANG` environment variable.
 
-- **client** — клиентский конфиг (нет `ListenPort`);
-- **не подконтрольный** — серверный конфиг без разметки AWGCTL;
-- **подконтрольный** — серверный конфиг под управлением `awgctl`.
+The result is an executable `build/awgctl`. Run:
 
-Для серверов показывается число клиентов (для подконтрольных — из зоны AWGCTL)
-или `[Peer]` (для не подконтрольных). `--json` — машинный вывод. Работает и по
-`--ssh` (сканирует каталог на удалённом сервере). Команду можно сокращать
-префиксом (`c`, `conf`, …); поэтому короткое имя конфига, само являющееся
-префиксом слова `configs` (напр. `con`), нужно указывать полным путём или с
-`.conf`.
+```bash
+python3 build/awgctl awg0 list      # or ./build/awgctl awg0 list
+```
 
-### Удалённый режим (SSH)
+System installation (`PREFIX` defaults to `/usr/local`):
 
-Любая команда может работать с конфигом **на удалённом сервере** — весь цикл
-(чтение, правка, `restart`, генерация ключей) выполняется там же. Опции
-подключения **глобальны**: их можно ставить в любом месте командной строки
-(до или после команды) и с любой командой, включая глобальную `configs`
-(`awgctl.py --ssh admin@vpn --sudo configs`):
+```bash
+sudo make install                       # -> /usr/local/bin/awgctl
+sudo make install PREFIX=/usr           # -> /usr/bin/awgctl
+sudo make uninstall
+make clean                              # remove build/
+```
 
-- `--ssh [USER@]HOST[:PORT]` — сервер (по умолчанию `USER=root`). Аутентификация
-  по ключу нативно; если ключ не подошёл, `--ask-pass` спросит SSH-пароль
-  (self-contained через `pty`, без `sshpass`/`paramiko`). Одно подключение на
-  процесс через `ControlMaster`.
-- `--sudo` — привилегированные команды на сервере через `sudo` (passwordless
-  `-n` либо `-S` с паролем; пароль реюзается из SSH-пароля или запрашивается
-  отдельно). Пароли на диск не пишутся.
-- `--ask-pass` — спросить SSH-пароль, если ключ не подошёл.
+The target machine only needs `python3` (standard library is sufficient) and `amneziawg-tools` (`awg`/`wg`) — for key generation and `show`.
 
-Примеры:
+### Build Structure
+
+- `src/*.py` — modules (`constants`, `i18n`, `backend`, `utils`, `config`, `importer`, `commands`, `cli`); the concatenation order is defined in `build.py` (`SRC_ORDER`).
+- `lang/<code>.py` — message dictionary `MESSAGES`; the selected language is embedded into the built file at build time.
+- `build.py` strips internal (relative) imports and concatenates modules into a single namespace, adding shebang, stdlib imports, and entry point.
+
+To add a language: copy `lang/en.py` to `lang/<code>.py`, translate the values, and build with `make AWGCTL_LANG=<code>`.
+
+## Usage
+
+```
+awgctl <config> <command> [arguments] [options]
+```
+
+`<config>` — path to the config **or** short name: `awg0` expands to `/etc/amnezia/amneziawg/awg0.conf` (the `.conf` extension is added automatically). For example: `awgctl.py awg0 list`, `awgctl.py awg0 add ivan`.
+
+Commands follow the `ip` style — abbreviated to any unambiguous prefix (`a`=add, `g`=get, `l`=list, `i`=init; for `d`-/`r`-/`s`-commands a distinguishing prefix is needed: `del`/`def`=defaults, `res`=restart, `rek`=rekey, `se`=set, `sh`=show):
+
+Detailed help per command — `awgctl.py <command> -h` (config can be omitted, e.g. `awgctl.py add -h`).
+
+- `init [--host=<host>] [-y] [--rekey-imported]` — initialize the server config **and import existing `[Peer]`s** under management.
+  - Role is determined by `ListenPort` in `[Interface]` (server even without clients); client config (without `ListenPort`) is rejected.
+  - Names are taken from `# BEGIN <name>` / `#_Name = <name>` or auto-generated from IP; interactively confirmed/changed (`-y`/`--yes` — accept auto-names without questions).
+  - Degenerate peers (gateway `/16`, site-to-site with `Endpoint`, without `AllowedIPs`) are adopted **as-is** with a warning; original functional fields (`AdvancedSecurity`, `Endpoint`, `PresharedKey`) are preserved, service `#_`-comments are cleaned up.
+  - `#_PrivateKey` (Amnezia desktop format) is taken → client is immediately fully manageable. Others without a private key are offered `rekey` (`--rekey-imported` — immediately, without asking).
+  - Repeated `init` on an already initialized config only updates the host via `--host`, clients are not touched.
+  - `--dry` (`--dry-run`) — **preview**: shows config role, initialization state, and for each `[Peer]` — proposed name (from config or auto-gen), type, parsed fields (`PublicKey`/`AllowedIPs`/`Endpoint`/`PSK`/`PrivateKey`) and remarks (no `PublicKey`, degenerate type, no `client_priv`). Does not write anything or take a lock.
+- `list [--json]` — list of clients. `--json` outputs machine-readable array (fields `name/ip/allow/routes/endpoint/keepalive/client_pub` + booleans `has_client_priv`/`has_psk`); secrets (private keys, PSK) are not output.
+- `add <name...>` — add one or more clients (for multiple names configs are separated by `# ==== <name> ====`, `--json` outputs an array): generates keys, computes server public key from its PrivateKey, assigns next free IP, outputs client config to stdout and writes `[Peer]`+metadata to config.
+  - `--client-allow=<cidr>` — AllowedIPs in SERVER `[Peer]` (networks behind client — for VPN-gateway), default is `Client IP/32`.
+  - `--client-routes=<cidr>` — AllowedIPs in CLIENT config (what client routes through VPN), default — from config defaults (`defaults`).
+  - `--keepalive=<n>` — PersistentKeepalive (in client config), default — from config defaults.
+  - `--dns=<list>` — client DNS, default — from config defaults.
+  - `--endpoint=<host:port>` — custom client endpoint (full host:port, fixed for the client). If not specified — endpoint is **dynamic**: built from default host in section + actual server `ListenPort` on each issuance.
+  - `--ssh=<host>` — generate keys on root@HOST if `awg`/`wg` is not available locally.
+- `del <name...> | --all` — delete one or more clients (and their `[Peer]`) or all at once via `--all`.
+- `get <name>` — output saved client config to stdout. If `client_priv` is missing (import without private key), warns and outputs incomplete config — `rekey` needed.
+- `rekey <name...> | --all` — rotate keys for one or more clients (new pair + PSK, update `[Peer]` and meta) or all via `--all`. Changes keys — clients need new configs distributed. Makes imported client without a key fully manageable.
+- `set <name...> | --all [options]` — change parameters of existing clients **without key rotation**, with **bulk** support (multiple names or `--all`):
+  - `--dns=<list>`, `--routes=<cidr>`, `--keepalive=<n>`, `--host=<host>`, `--endpoint=<host:port>` — affect only the issued client config (`get`);
+  - `--allow=<cidr>` — changes **server** `AllowedIPs` in `[Peer]` (and meta).
+  - Endpoint priority for client: `--endpoint` (full `host:port`) > per-client `--host` (host:ListenPort) > default config `host`.
+  - After changing, distribute new configs to affected clients (`get <name>`).
+  - `set --defaults [--host= --dns= --routes= --keepalive=]` — change not clients, but **config defaults** (equivalent to `defaults` command; names/`--all`/`--endpoint`/`--allow` are not allowed here).
+- `defaults [--host= --dns= --routes= --keepalive=]` — show (without flags) or change default client parameters. `host` is stored as `# AWGCTL-HOST` string (same as `init --host`), `dns/routes/keepalive` — as `# AWGCTL-DEFAULTS` string; substituted in `add` when corresponding flag is not set. Defaults only fill **empty** client fields (for imported ones `keepalive`/`routes` are already set — for bulk change use `set --all`).
+- `show [--json]` — **live tunnel status** from `awg show <iface> dump`: for each client name (matched by public key from AWGCTL zone), last handshake time, received/transmitted, endpoint. Requires running interface and root (locally) or `--ssh --sudo`.
+- `restart` — restart tunnel locally via `awg-quick` (if interface is running).
+
+`--json` is also available for `add`, `get`, and `init --dry` — machine output (`add`/`get` object contains client fields and ready `config` string; `init --dry --json` — structured parsing).
+
+Flag `-r | --restart` for `init`/`add`/`del`/`rekey` restarts tunnel immediately after operation (e.g. `awgctl.py awg0.conf add ivan -r`).
+
+### Config Overview (`configs`)
+
+Global command — **not bound to a single config** (no config slot needed), written as first argument:
+
+```
+awgctl.py configs [DIRECTORY] [--json] [--ssh ... --sudo]
+```
+
+Shows all `*.conf` in directory (default `/etc/amnezia/amneziawg`, or specified `DIRECTORY`) with classification of each:
+
+- **client** — client config (no `ListenPort`);
+- **unmanaged** — server config without AWGCTL markup;
+- **managed** — server config under `awgctl` management.
+
+For servers shows number of clients (for managed — from AWGCTL zone) or `[Peer]` (for unmanaged). `--json` — machine output. Works via `--ssh` too (scans directory on remote server). Command can be abbreviated by prefix (`c`, `conf`, ...); therefore short config name that is itself a prefix of `configs` (e.g. `con`) must be specified with full path or `.conf`.
+
+### Remote Mode (SSH)
+
+Any command can work with config **on a remote server** — the entire cycle (read, edit, `restart`, key generation) runs there. Connection options are **global**: they can be placed anywhere in command line (before or after command) and with any command, including global `configs` (`awgctl.py --ssh admin@vpn --sudo configs`):
+
+- `--ssh [USER@]HOST[:PORT]` — server (default `USER=root`). Key authentication works natively; if key fails, `--ask-pass` asks for SSH password (self-contained via `pty`, without `sshpass`/`paramiko`). One connection per process via `ControlMaster`.
+- `--sudo` — privileged commands on server via `sudo` (passwordless `-n` or `-S` with password; password is reused from SSH password or requested separately). Passwords are not written to disk.
+- `--ask-pass` — ask for SSH password if key didn't work.
+
+Examples:
 
 ```
 awgctl.py /etc/amnezia/amneziawg/awg0.conf list --ssh admin@vpn.example.com --sudo
 awgctl.py awg0.conf init --host vpn.example.com --ssh admin@vpn:22 --sudo -r
 ```
 
-Удалённая запись атомарна (`base64 | tee` + `mv`), с бэкапом `.bak`; блокировка
-на сервере — через `mkdir <config>.lockd` (переживает отдельные ssh-вызовы).
+Remote write is atomic (`base64 | tee` + `mv`), with `.bak` backup; locking on server — via `mkdir <config>.lockd` (survives individual ssh calls).
 
-### Неинтерактивный режим (`--batch`) — для интеграции в софт
+### Non-Interactive Mode (`--batch`) — for software integration
 
-Весь цикл (`init`/`add`/`del`/`rekey`/`set`/`restart` по SSH+sudo) может
-проходить **без единого интерактивного ввода**. Глобальные флаги:
+The entire cycle (`init`/`add`/`del`/`rekey`/`set`/`restart` via SSH+sudo) can run **without any interactive input**. Global flags:
 
-- `--batch` (`--non-interactive`) — промптов нет вообще. Любой момент, где
-  потребовался бы ввод (SSH/sudo-пароль, вопрос) без заданного источника/
-  флага → **внятная ошибка сразу**, а не зависание. Не зависит от наличия
-  TTY (безопасно даже под pty).
-- `--ssh-pass=<источник>` — источник SSH-пароля (если ключ не подошёл).
-- `--sudo-pass=<источник>` — источник sudo-пароля.
+- `--batch` (`--non-interactive`) — no prompts at all. Any moment where input would be required (SSH/sudo password, question) without given source/flag → **clear error immediately**, not a hang. Does not depend on TTY presence (safe even under pty).
+- `--ssh-pass=<source>` — SSH password source (if key didn't work).
+- `--sudo-pass=<source>` — sudo password source.
 
-Источник секрета: **`fd:N`** (читать из файлового дескриптора — не светится
-в `ps`/`env`/fs; основной способ) или **`env:VAR`** (переменная окружения —
-проще, но видна в `/proc/<pid>/environ`). Секрет читается без завершающего
-перевода строки и на диск/в argv не попадает.
+Secret source: **`fd:N`** (read from file descriptor — not visible in `ps`/`env`/fs; primary method) or **`env:VAR`** (environment variable — simpler, but visible in `/proc/<pid>/environ`). Secret is read without trailing newline and does not end up on disk/in argv.
 
-Привилегированные/деструктивные действия в `--batch` выполняются **только по
-явным флагам** (иначе — пропуск с предупреждением):
+Privileged/destructive actions in `--batch` are performed **only by explicit flags** (otherwise — skip with warning):
 
-- `init --fix-perms` — починить права конфига (`chmod 600` + `chown
-  root:root`); без флага в batch права лишь проверяются с предупреждением.
-- `init --rekey-imported` — ротировать ключи импортированных клиентов без
-  приватного ключа.
+- `init --fix-perms` — fix config permissions (`chmod 600` + `chown root:root`); without flag in batch permissions are only checked with warning.
+- `init --rekey-imported` — rotate keys for imported clients without private key.
 
-Имена клиентов при импорте в `--batch`/`-y` берутся автоматически
-(из `# BEGIN`/`#_Name`/из IP).
+Client names on import in `--batch`/`-y` are taken automatically (from `# BEGIN`/`#_Name`/from IP).
 
-Примеры:
+Examples:
 
 ```
-# init удалённого сервера полностью автоматически (пароль по SSH из fd 3,
-# sudo тем же паролем; права чиним; ключи импортированных ротируем)
+# init remote server fully automatically (SSH password from fd 3,
+# sudo with same password; fix permissions; rotate imported keys)
 awgctl.py awg0 init --batch --host vpn.example.com --fix-perms \
   --rekey-imported --ssh admin@vpn --sudo --ssh-pass=fd:3 3<pw.txt
 
-# add через окружение (sudo-пароль отдельно), машинный JSON на выходе
+# add via environment (sudo password separate), machine JSON output
 AWG_SSH=... AWG_SUDO=... awgctl.py awg0 add phone --json --batch \
   --ssh admin@vpn --sudo --ssh-pass=env:AWG_SSH --sudo-pass=env:AWG_SUDO
 ```
 
-Маска IP клиента в клиентском конфиге подставляется из серверного `Address`.
-Разметка каждой записи хранится в комментарии `# AWGCTL |...|`, клиентские
-конфиги в файлы НЕ сохраняются — только stdout. Мутирующие команды берут
-блокировку `<config>.lock`, пишут атомарно и оставляют бэкап `<config>.bak`.
+Client IP mask in client config is taken from server `Address`. Each record markup is stored in `# AWGCTL |...|` comment, client configs are NOT saved to files — only stdout. Mutating commands take lock `<config>.lock`, write atomically, and leave backup `<config>.bak`.
 
-### Права серверного конфига и root
+### Server Config Permissions and Root
 
-В серверном конфиге лежат **приватные ключи** (сервера и клиентов), а сам
-интерфейс поднимается через `awg-quick` только с правами root (netlink,
-маршруты). Поэтому целевая модель — **`root:root`, режим `0600`** (как и
-делает `wg-quick` через `umask 077`). Отдельный непривилегированный
-«awg-пользователь» смысла не имеет: интерфейсом он не управляет, а доступ к
-конфигу = доступ ко всем ключам.
+The server config contains **private keys** (server and clients), and the interface is brought up via `awg-quick` only with root privileges (netlink, routes). Therefore the target model is **`root:root`, mode `0600`** (as `wg-quick` does via `umask 077`). A separate unprivileged "awg-user" makes no sense: they can't manage the interface, and access to config = access to all keys.
 
-- Все мутации пишут файл сразу с `0600` (атомарный replace не «раскрывает»
-  права).
-- При любом взаимодействии, если права небезопасны (доступ группе/остальным
-  или владелец не root), печатается предупреждение (в `--json`-режимах
-  подавляется, чтобы не портить поток).
-- `init` при небезопасных правах **предлагает починить** (`chmod 600` +
-  `chown root:root`; `-y` — сразу). Для chown нужен root/`--sudo`.
+- All mutations write file immediately with `0600` (atomic replace doesn't "expose" permissions).
+- On any interaction, if permissions are insecure (group/other access or owner not root), a warning is printed (suppressed in `--json` modes to not break the stream).
+- `init` with insecure permissions **offers to fix** (`chmod 600` + `chown root:root`; `-y` — immediately). For chown root/`--sudo` is needed.
 
-### Защита от IPv6-адресных пространств
+### IPv6 Address Space Protection
 
-Клиентские IP выдаются из **IPv4**-подсети сервера: если в `Address` есть и
-IPv4, и IPv6, для аллокации выбирается IPv4 (перебор хостов в IPv6 `/64` =
-2^64 бессмыслен). Перебор адресов ограничен сверху (`MAX_IP_SCAN`), чтобы не
-зависнуть на гигантском пространстве.
+Client IPs are allocated from the **IPv4** subnet of the server: if `Address` has both IPv4 and IPv6, IPv4 is chosen for allocation (iterating hosts in IPv6 `/64` = 2^64 is meaningless). Address iteration is limited from above (`MAX_IP_SCAN`) to avoid hanging on giant spaces.

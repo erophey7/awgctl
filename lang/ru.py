@@ -2,15 +2,9 @@
 MESSAGES = {
     "description": "Управление клиентами AmneziaWG в серверном конфиге.",
     "epilog": (
-        "Команды можно сокращать до любого однозначного префикса (ip-стиль): "
-        "a=add, g=get, l=list, i=init; для d-/r-/s-команд нужен "
-        "различающий префикс: del/def(aults), res(tart)/rek(ey), se(t)/sh(ow).\n\n"
-        "Опции подключения (--ssh/--sudo/--ask-pass) глобальны — их можно\n"
-        "ставить в любом месте и с любой командой, включая configs.\n\n"
-        "Глобальная команда (без config): configs — обзор конфигов в\n"
-        "каталоге со статусами.\n\n"
-        "Подробный help по команде: awgctl [<config>] <команда> -h\n"
-        "  (config для -h можно опустить) напр.: awgctl add -h"
+        "Команду можно сокращать префиксом (a=add, i=init, l=list, g=get; для "
+        "неоднозначных: del/def, res/rek, se/sh). "
+        "Глобальная команда: configs. Help по команде: awgctl <команда> -h."
     ),
     "conn_group": "опции подключения (глобальные)",
     "help_ssh": "работать с конфигом на удалённом сервере по SSH (read/write/restart там же)",
@@ -23,15 +17,10 @@ MESSAGES = {
     "help_restart_flag": "перезапустить туннель через awg-quick после операции (если запущен)",
     "init_help": "добавить разметку AWGCTL / импортировать peer'ов",
     "init_desc": (
-        "Разметить серверный конфиг зоной AWGCTL и импортировать уже\n"
-        "существующие [Peer] под управление.\n\n"
-        "Роль конфига определяется по наличию ListenPort в [Interface]:\n"
-        "клиентский конфиг (без ListenPort) отклоняется. Имена берутся из\n"
-        "'# BEGIN <name>' / '#_Name = <name>' или автогенерируются из IP;\n"
-        "интерактивно подтверждаются/меняются. Вырожденные peer'ы (gateway/s2s/без\n"
-        "AllowedIPs) адоптируются как есть с предупреждением. Клиентам без\n"
-        "приватного ключа предлагается rekey. Повторный init на размеченном\n"
-        "конфиге лишь обновляет host по --host."
+        "Разметить серверный конфиг зоной AWGCTL и импортировать существующие "
+        "[Peer]. Роль определяется по ListenPort (клиентский конфиг "
+        "отклоняется); вырожденные peer'ы (gateway/s2s/без AllowedIPs) "
+        "адоптируются с предупреждением. Повторный init лишь обновляет host (--host)."
     ),
     "init_epilog": (
         "Примеры:\n"
@@ -54,11 +43,9 @@ MESSAGES = {
     "add_help": "добавить клиента",
     "add_desc": "Сгенерировать новую пару ключей + PSK, выделить свободный IP из подсети сервера, добавить [Peer] в зону AWGCTL и вывести готовый клиентский конфиг в stdout (в файл не сохраняется).",
     "add_epilog": (
-        "Не заданные --client-routes/--keepalive/--dns берутся из дефолтов\n"
-        "конфига (см. команду defaults).\n\n"
         "Примеры:\n"
         "  awgctl awg0 add phone\n"
-        "  awgctl awg0 add laptop --client-routes '10.0.0.0/24'\n"
+        "  awgctl awg0 add phone laptop tablet         # несколько сразу\n"
         "  awgctl awg0 add site --client-allow '192.168.5.0/24'  # gateway\n"
         "  awgctl awg0 add phone --dns '10.0.0.1' --endpoint vpn:51820"
     ),
@@ -69,14 +56,14 @@ MESSAGES = {
     "help_dns": "DNS клиента, по умолчанию — из дефолтов конфига",
     "help_endpoint": "кастомный endpoint клиента host:port",
     "del_help": "удалить клиента",
-    "del_desc": "Удалить клиента (его meta + [Peer]) из зоны AWGCTL.",
-    "del_epilog": "Пример:\n  awgctl awg0 del phone",
+    "del_desc": "Удалить одного или нескольких клиентов (meta + [Peer]) из зоны AWGCTL. Поддерживает --all.",
+    "del_epilog": "Примеры:\n  awgctl awg0 del phone\n  awgctl awg0 del phone laptop\n  awgctl awg0 del --all",
     "get_help": "вывести конфиг клиента",
     "get_desc": "Пересобрать и вывести в stdout клиентский конфиг ранее созданного клиента (ключи берутся из зоны AWGCTL).",
     "get_epilog": "Пример:\n  awgctl awg0 get phone > phone.conf",
     "rekey_help": "ротация ключей клиента (новая пара + PSK)",
-    "rekey_desc": "Сгенерировать клиенту новую пару ключей и PSK, обновить [Peer] и вывести новый конфиг. Старый конфиг перестанет коннектиться, пока клиент не заберёт новый. Полезно для импортированных без приватного ключа клиентов.",
-    "rekey_epilog": "Пример:\n  awgctl awg0 rekey phone",
+    "rekey_desc": "Ротация ключей (новая пара + PSK) для одного или нескольких клиентов, с выводом новых конфигов. Поддерживает --all. Старые конфиги перестанут коннектиться, пока клиенты не заберут новые.",
+    "rekey_epilog": "Примеры:\n  awgctl awg0 rekey phone\n  awgctl awg0 rekey phone laptop\n  awgctl awg0 rekey --all",
     "set_help": "изменить параметры клиента(ов) (bulk)",
     "set_desc": (
         "Изменить параметры существующих клиентов без ротации ключей.\n"

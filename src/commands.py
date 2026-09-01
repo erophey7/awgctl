@@ -423,19 +423,48 @@ def validate_allowed_ips(value, what):
             sys.exit(1)
 
 
-def cmd_add(cfg_path, name, allow=None, routes=None, keepalive=None,
+def _region_client_names(lines):
+    """Names of clients currently in the AWGCTL zone, in file order."""
+    names = []
+    start, end = find_ctl_region(lines)
+    if start is None or end is None:
+        return names
+    for i in range(start + 1, end):
+        if lines[i].startswith("# AWGCTL"):
+            m = parse_meta(lines[i])
+            if m and m.get("name"):
+                names.append(m["name"])
+    return names
+
+
+def _resolve_targets(lines, names, all_clients):
+    """Resolve target client names for bulk del/rekey. Exits on missing."""
+    present = _region_client_names(lines)
+    if all_clients:
+        return list(present)
+    missing = [n for n in names if n not in present]
+    if missing:
+        print(_t("err_missing_clients", names=", ".join(missing)),
+              file=sys.stderr)
+        sys.exit(1)
+    return list(names)
+
+
+def cmd_add(cfg_path, names, allow=None, routes=None, keepalive=None,
             endpoint=None, dns=None, json_out=False):
     if not find_wg_bin():
         print(_t("err_no_wg"), file=sys.stderr)
         sys.exit(1)
-    if not re.match(r"^[\w.-]+$", name):
-        print(_t("err_invalid_name"), file=sys.stderr)
-        sys.exit(1)
+    for name in names:
+        if not re.match(r"^[\w.-]+$", name):
+            print(_t("err_invalid_name"), file=sys.stderr)
+            sys.exit(1)
     if allow is not None:
         validate_allowed_ips(allow, "--client-allow")
     if routes is not None:
         validate_allowed_ips(routes, "--client-routes")
 
+    entries = []
     with config_lock(cfg_path):
         lines = read_config(cfg_path)
         defaults = get_defaults(lines)
@@ -445,32 +474,13 @@ def cmd_add(cfg_path, name, allow=None, routes=None, keepalive=None,
             sys.exit(1)
 
         clients = region_contents(lines, start, end)
-        existing = [c["name"] for c in clients]
-        if name in existing:
-            print(_t("err_exists", name=name), file=sys.stderr)
-            sys.exit(1)
+        existing = {c["name"] for c in clients}
         used_ips = {c["ip"] for c in clients}
 
         addr, subnet, port = get_server_address(cfg_path)
         if subnet is None:
             print(_t("err_no_address"), file=sys.stderr)
             sys.exit(1)
-
-        client_ip_val = next_free_ip(subnet, addr, used_ips)
-        if client_ip_val is None:
-            print(_t("err_no_free_ip"), file=sys.stderr)
-            sys.exit(1)
-
-        if allow is None:
-            allow = f"{client_ip_val}/32"
-        if routes is None:
-            routes = defaults["routes"]
-        if keepalive is None:
-            keepalive = defaults["keepalive"]
-        if dns is None:
-            dns = defaults["dns"]
-        if endpoint is None:
-            endpoint = ""
 
         server_priv = get_server_private(cfg_path)
         if not server_priv:
@@ -482,47 +492,59 @@ def cmd_add(cfg_path, name, allow=None, routes=None, keepalive=None,
             print(_t("err_server_pub_fail"), file=sys.stderr)
             sys.exit(1)
 
-        priv = genkey()
-        pub = pubkey(priv)
-        psk = genpsk()
+        insert_block = []
+        for name in names:
+            if name in existing:
+                print(_t("err_exists", name=name), file=sys.stderr)
+                sys.exit(1)
+            existing.add(name)  # avoid dup within the same batch
 
-        entry = {
-            "name": name,
-            "ip": client_ip_val,
-            "allow": allow,
-            "routes": routes,
-            "keepalive": keepalive,
-            "endpoint": endpoint,
-            "dns": dns,
-            "psk": psk,
-            "server_pub": server_pub,
-            "client_pub": pub,
-            "client_priv": priv,
-        }
+            client_ip_val = next_free_ip(subnet, addr, used_ips)
+            if client_ip_val is None:
+                print(_t("err_no_free_ip"), file=sys.stderr)
+                sys.exit(1)
+            used_ips.add(client_ip_val)
 
-        meta_line = make_meta(entry)
-        peer_block = [
-            "",
-            meta_line,
-            "[Peer]",
-            f"PublicKey = {pub}",
-            f"PresharedKey = {psk}",
-            f"AllowedIPs = {allow}",
-            "",
-        ]
-        new_lines = lines[:end] + peer_block + lines[end:]
+            a = allow if allow is not None else f"{client_ip_val}/32"
+            r = routes if routes is not None else defaults["routes"]
+            ka = keepalive if keepalive is not None else defaults["keepalive"]
+            d = dns if dns is not None else defaults["dns"]
+            ep = endpoint if endpoint is not None else ""
+
+            priv = genkey()
+            pub = pubkey(priv)
+            psk = genpsk()
+            entry = {
+                "name": name, "ip": client_ip_val, "allow": a, "routes": r,
+                "keepalive": ka, "endpoint": ep, "dns": d, "psk": psk,
+                "server_pub": server_pub, "client_pub": pub, "client_priv": priv,
+            }
+            entries.append(entry)
+            insert_block += ["", make_meta(entry), "[Peer]",
+                             f"PublicKey = {pub}", f"PresharedKey = {psk}",
+                             f"AllowedIPs = {a}", ""]
+
+        new_lines = lines[:end] + insert_block + lines[end:]
         normalize_region_blanks(new_lines)
         write_config(cfg_path, new_lines)
-
         ctl_host = get_ctl_host(lines)
 
     kw = dict(host=ctl_host or "", port=port, prefix=client_prefix(cfg_path),
               masking=get_server_maskings(cfg_path))
     if json_out:
-        print(json.dumps(client_json(entry, **kw), ensure_ascii=False, indent=2))
+        payload = (client_json(entries[0], **kw) if len(entries) == 1
+                   else [client_json(e, **kw) for e in entries])
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print_client_config(entry, **kw)
-    print("\n" + _t("info_added", name=name, path=cfg_path), file=sys.stderr)
+        for i, e in enumerate(entries):
+            if i:
+                print()
+            if len(entries) > 1:
+                print(f"# ==== {e['name']} ====")
+            print_client_config(e, **kw)
+    for e in entries:
+        print("\n" + _t("info_added", name=e["name"], path=cfg_path),
+              file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -605,38 +627,37 @@ def print_client_config(e, host="", port=None, prefix=24, masking=()):
 # ---------------------------------------------------------------------------
 # del
 # ---------------------------------------------------------------------------
-def cmd_del(cfg_path, name):
+def cmd_del(cfg_path, names, all_clients=False):
     with config_lock(cfg_path):
-        _cmd_del_locked(cfg_path, name)
+        _cmd_del_locked(cfg_path, names, all_clients)
 
 
-def _cmd_del_locked(cfg_path, name):
+def _cmd_del_locked(cfg_path, names, all_clients):
     lines = read_config(cfg_path)
     start, end = find_ctl_region(lines)
     if start is None or end is None:
         print(_t("err_no_markup"), file=sys.stderr)
         sys.exit(1)
-    i = start + 1
-    found_start = None
-    while i < end:
-        if lines[i].startswith("# AWGCTL"):
-            meta = parse_meta(lines[i])
-            if meta and meta.get("name") == name:
-                found_start = i
-                break
-        i += 1
-    if found_start is None:
-        print(_t("err_peer_not_found", name=name), file=sys.stderr)
-        sys.exit(1)
-    j = found_start + 1
-    while j < end:
-        if lines[j].startswith("# AWGCTL"):
-            break
-        j += 1
-    del lines[found_start:j]
+    targets = _resolve_targets(lines, names, all_clients)
+    if not targets:
+        print(_t("msg_no_clients"), file=sys.stderr)
+        return
+    target_set = set(targets)
+    # collect meta blocks, then delete the matching ranges bottom-up
+    metas = [(i, parse_meta(lines[i]).get("name"))
+             for i in range(start + 1, end)
+             if lines[i].startswith("# AWGCTL") and parse_meta(lines[i])]
+    ranges = []
+    for k, (mi, nm) in enumerate(metas):
+        if nm in target_set:
+            block_end = metas[k + 1][0] if k + 1 < len(metas) else end
+            ranges.append((mi, block_end))
+    for a, b in sorted(ranges, reverse=True):
+        del lines[a:b]
     normalize_region_blanks(lines)
     write_config(cfg_path, lines)
-    print(_t("info_deleted", name=name))
+    for n in targets:
+        print(_t("info_deleted", name=n))
 
 
 # ---------------------------------------------------------------------------
@@ -835,79 +856,97 @@ def _apply_allow(lines, meta_idx, block_end, allow):
 # ---------------------------------------------------------------------------
 # rekey
 # ---------------------------------------------------------------------------
-def cmd_rekey(cfg_path, name):
-    """Rotate client keys: new pair + PSK, update [Peer] and meta.
+def _rekey_one(lines, name, server_priv):
+    """Rotate keys for a single client in `lines` (in-place). Returns entry.
+
+    Re-scans the region each call so it stays correct across multiple rekeys
+    (inserting a PresharedKey line shifts later indices)."""
+    start, end = find_ctl_region(lines)
+    meta_idx = None
+    for i in range(start + 1, end):
+        if lines[i].startswith("# AWGCTL"):
+            meta = parse_meta(lines[i])
+            if meta and meta.get("name") == name:
+                meta_idx = i
+                break
+    b = meta_idx + 1
+    while (b < end and lines[b].strip() != ""
+           and not lines[b].startswith("# AWGCTL")):
+        b += 1
+
+    entry = parse_meta(lines[meta_idx])
+    server_pub = entry.get("server_pub") or ""
+    if not server_pub and server_priv:
+        try:
+            server_pub = pubkey(server_priv)
+        except subprocess.CalledProcessError:
+            pass
+
+    priv = genkey()
+    pub = pubkey(priv)
+    psk = genpsk()
+    entry.update(client_priv=priv, client_pub=pub, psk=psk,
+                 server_pub=server_pub)
+    entry.setdefault("routes", "0.0.0.0/0, ::/0")
+    entry.setdefault("keepalive", "25")
+    entry.setdefault("endpoint", "")
+    entry.setdefault("allow", "")
+    entry.setdefault("ip", "")
+
+    lines[meta_idx] = make_meta(entry)
+    pub_i = psk_i = None
+    for k in range(meta_idx + 1, b):
+        if re.match(r"^\s*PublicKey\s*=", lines[k], re.I):
+            pub_i = k
+        elif re.match(r"^\s*PresharedKey\s*=", lines[k], re.I):
+            psk_i = k
+    if pub_i is not None:
+        lines[pub_i] = f"PublicKey = {pub}"
+    if psk_i is not None:
+        lines[psk_i] = f"PresharedKey = {psk}"
+    elif pub_i is not None:
+        lines.insert(pub_i + 1, f"PresharedKey = {psk}")
+    return entry
+
+
+def cmd_rekey(cfg_path, names, all_clients=False):
+    """Rotate keys for one or more clients (new pair + PSK). Supports --all.
 
     Gives full management for imported clients without client_priv. Changes
-    keys — old client config stops connecting until new one is distributed.
+    keys — old client configs stop connecting until new ones are distributed.
     """
     if not find_wg_bin():
         print(_t("err_no_wg"), file=sys.stderr)
         sys.exit(1)
+    entries = []
     with config_lock(cfg_path):
         lines = read_config(cfg_path)
         start, end = find_ctl_region(lines)
         if start is None or end is None:
             print(_t("err_no_markup"), file=sys.stderr)
             sys.exit(1)
-        meta_idx = None
-        for i in range(start + 1, end):
-            if lines[i].startswith("# AWGCTL"):
-                meta = parse_meta(lines[i])
-                if meta and meta.get("name") == name:
-                    meta_idx = i
-                    break
-        if meta_idx is None:
-            print(_t("err_peer_not_found", name=name), file=sys.stderr)
-            sys.exit(1)
-        b = meta_idx + 1
-        while (b < end and lines[b].strip() != ""
-               and not lines[b].startswith("# AWGCTL")):
-            b += 1
-
-        entry = parse_meta(lines[meta_idx])
+        targets = _resolve_targets(lines, names, all_clients)
+        if not targets:
+            print(_t("msg_no_clients"), file=sys.stderr)
+            return
         server_priv = get_server_private(cfg_path)
-        server_pub = entry.get("server_pub") or ""
-        if not server_pub and server_priv:
-            try:
-                server_pub = pubkey(server_priv)
-            except subprocess.CalledProcessError:
-                pass
-
-        priv = genkey()
-        pub = pubkey(priv)
-        psk = genpsk()
-        entry.update(client_priv=priv, client_pub=pub, psk=psk,
-                     server_pub=server_pub)
-        entry.setdefault("routes", "0.0.0.0/0, ::/0")
-        entry.setdefault("keepalive", "25")
-        entry.setdefault("endpoint", "")
-        entry.setdefault("allow", "")
-        entry.setdefault("ip", "")
-
-        lines[meta_idx] = make_meta(entry)
-        pub_i = psk_i = None
-        for k in range(meta_idx + 1, b):
-            if re.match(r"^\s*PublicKey\s*=", lines[k], re.I):
-                pub_i = k
-            elif re.match(r"^\s*PresharedKey\s*=", lines[k], re.I):
-                psk_i = k
-        if pub_i is not None:
-            lines[pub_i] = f"PublicKey = {pub}"
-        if psk_i is not None:
-            lines[psk_i] = f"PresharedKey = {psk}"
-        elif pub_i is not None:
-            lines.insert(pub_i + 1, f"PresharedKey = {psk}")
-            b += 1
-
+        for name in targets:
+            entries.append(_rekey_one(lines, name, server_priv))
         write_config(cfg_path, lines)
         host = get_ctl_host(lines)
         _, _, port = get_server_address(cfg_path)
 
-    print_client_config(entry, host=host or "", port=port,
-                        prefix=client_prefix(cfg_path),
-                        masking=get_server_maskings(cfg_path))
-    print("\n" + _t("info_rekeyed_client", name=name), file=sys.stderr)
+    kw = dict(host=host or "", port=port, prefix=client_prefix(cfg_path),
+              masking=get_server_maskings(cfg_path))
+    for i, entry in enumerate(entries):
+        if i:
+            print()
+        if len(entries) > 1:
+            print(f"# ==== {entry['name']} ====")
+        print_client_config(entry, **kw)
+    for entry in entries:
+        print("\n" + _t("info_rekeyed_client", name=entry["name"]),
+              file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------

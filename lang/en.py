@@ -2,15 +2,9 @@
 MESSAGES = {
     "description": "Manage AmneziaWG clients in a server config.",
     "epilog": (
-        "Commands can be abbreviated to any unambiguous prefix (ip-style): "
-        "a=add, g=get, l=list, i=init; for d-/r-/s-commands use distinguishing "
-        "prefix: del/def(aults), res(tart)/rek(ey), se(t)/sh(ow).\n\n"
-        "Connection options (--ssh/--sudo/--ask-pass) are global — they can be\n"
-        "placed anywhere and work with any command, including configs.\n\n"
-        "Global command (no config required): configs — overview of configs in\n"
-        "directory with statuses.\n\n"
-        "Detailed help per command: awgctl [<config>] <command> -h\n"
-        "  (config can be omitted for -h) e.g.: awgctl add -h"
+        "Commands abbreviate to any unambiguous prefix (a=add, i=init, l=list, "
+        "g=get; ambiguous need more: del/def, res/rek, se/sh). "
+        "Global command: configs. Per-command help: awgctl <command> -h."
     ),
     "conn_group": "connection options (global)",
     "help_ssh": "operate on remote server via SSH (read/write/restart there)",
@@ -23,15 +17,10 @@ MESSAGES = {
     "help_restart_flag": "restart tunnel via awg-quick after operation (if running)",
     "init_help": "add AWGCTL markup / import existing peers",
     "init_desc": (
-        "Mark up the server config with an AWGCTL zone and import existing\n"
-        "[Peer] sections under management.\n\n"
-        "Config role is determined by ListenPort in [Interface]:\n"
-        "client config (no ListenPort) is rejected. Names are taken from\n"
-        "'# BEGIN <name>' / '#_Name = <name>' or auto-generated from IP;\n"
-        "confirmed interactively. Degenerate peers (gateway/s2s/no AllowedIPs)\n"
-        "are adopted as-is with a warning. Clients without a private key are\n"
-        "offered rekey. Re-running init on an already marked config only\n"
-        "updates the default host (with --host)."
+        "Mark up the server config with an AWGCTL zone and import existing "
+        "[Peer] sections. Role is detected by ListenPort (client configs are "
+        "rejected); degenerate peers (gateway/s2s/no AllowedIPs) are adopted "
+        "with a warning. Re-running only updates the default host (--host)."
     ),
     "init_epilog": (
         "Examples:\n"
@@ -54,11 +43,9 @@ MESSAGES = {
     "add_help": "add a client",
     "add_desc": "Generate a new key pair + PSK, allocate a free IP from the server subnet, add [Peer] to the AWGCTL zone and output the ready client config to stdout (not saved to file).",
     "add_epilog": (
-        "Unspecified --client-routes/--keepalive/--dns are taken from config defaults\n"
-        "(see defaults command).\n\n"
         "Examples:\n"
         "  awgctl awg0 add phone\n"
-        "  awgctl awg0 add laptop --client-routes '10.0.0.0/24'\n"
+        "  awgctl awg0 add phone laptop tablet         # several at once\n"
         "  awgctl awg0 add site --client-allow '192.168.5.0/24'  # gateway\n"
         "  awgctl awg0 add phone --dns '10.0.0.1' --endpoint vpn:51820"
     ),
@@ -69,14 +56,14 @@ MESSAGES = {
     "help_dns": "client DNS; default from config defaults",
     "help_endpoint": "custom client endpoint host:port",
     "del_help": "delete a client",
-    "del_desc": "Remove client (their meta + [Peer]) from the AWGCTL zone.",
-    "del_epilog": "Example:\n  awgctl awg0 del phone",
+    "del_desc": "Remove one or more clients (meta + [Peer]) from the AWGCTL zone. Supports --all.",
+    "del_epilog": "Examples:\n  awgctl awg0 del phone\n  awgctl awg0 del phone laptop\n  awgctl awg0 del --all",
     "get_help": "output client config",
     "get_desc": "Rebuild and output to stdout the client config of an existing client (keys are taken from the AWGCTL zone).",
     "get_epilog": "Example:\n  awgctl awg0 get phone > phone.conf",
     "rekey_help": "rotate client keys (new pair + PSK)",
-    "rekey_desc": "Generate a new key pair and PSK for the client, update [Peer] and output a new config. The old config will stop connecting until the client fetches the new one. Useful for imported clients without a private key.",
-    "rekey_epilog": "Example:\n  awgctl awg0 rekey phone",
+    "rekey_desc": "Rotate keys (new pair + PSK) for one or more clients and output new configs. Supports --all. Old configs stop connecting until clients fetch the new ones.",
+    "rekey_epilog": "Examples:\n  awgctl awg0 rekey phone\n  awgctl awg0 rekey phone laptop\n  awgctl awg0 rekey --all",
     "set_help": "change client parameters (bulk)",
     "set_desc": (
         "Change parameters of existing clients without rotating keys.\n"
