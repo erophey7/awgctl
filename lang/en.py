@@ -3,11 +3,14 @@ MESSAGES = {
     "description": "Manage AmneziaWG clients in a server config.",
     "epilog": (
         "Commands abbreviate to any unambiguous prefix (a=add, i=init, l=list, "
-        "g=get; ambiguous need more: del/def, res/rek, se/sh). "
+        "g=get; ambiguous need more: del/def, res/rek/ren, se/sh). "
         "Global command: configs. Per-command help: awgctl <command> -h."
     ),
     "conn_group": "connection options (global)",
     "help_ssh": "operate on remote server via SSH (read/write/restart there)",
+    "help_ssh_config": "OpenSSH config file (-F); requires --ssh; defaults to normal SSH config",
+    "err_ssh_config_without_ssh": "Error: --ssh-config requires --ssh.",
+    "err_ssh_config": "Error reading SSH configuration: {err}",
     "help_sudo": "run privileged commands on remote server via sudo",
     "help_ask_pass": "ask for SSH password if key auth fails",
     "help_ssh_pass": "SSH password source without prompt: fd:N or env:VAR",
@@ -50,6 +53,12 @@ MESSAGES = {
         "  awgctl awg0 add phone --dns '10.0.0.1' --endpoint vpn:51820"
     ),
     "help_name": "client name",
+    "help_new_name": "new client name (letters, digits, underscores, dots, hyphens)",
+    "rename_help": "rename a client",
+    "rename_desc": "Change a client's name without changing keys, IP or peer settings. No tunnel restart or new client config is needed. The new name must be unused.",
+    "rename_epilog": "Example:\n  awgctl awg0 rename client-10-0-0-2 phone",
+    "info_renamed": "Renamed client '{name}' to '{new_name}'.",
+    "info_name_unchanged": "Client '{name}' already has this name; no changes made.",
     "help_client_allow": "AllowedIPs in server [Peer] (networks behind client, for VPN gateway); default is client IP/32",
     "help_client_routes": "AllowedIPs in client config (what client routes through VPN); default from config defaults",
     "help_keepalive": "PersistentKeepalive; default from config defaults",

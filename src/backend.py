@@ -110,16 +110,24 @@ def _pty_send_password(argv, password, prompt_re=rb"[Pp]assword:|passphrase"):
 
 class SshBackend:
     def __init__(self, target, use_sudo=False, ask_pass=False,
-                 ssh_pass_src=None, sudo_pass_src=None):
-        user, host = "root", target
+                 ssh_pass_src=None, sudo_pass_src=None, ssh_config=None):
+        user, host = None, target
         if "@" in target:
             user, host = target.split("@", 1)
         port = None
-        if ":" in host and not host.startswith("["):
-            host, p = host.rsplit(":", 1)
+        if host.startswith("[") and "]" in host:
+            closing = host.index("]")
+            suffix = host[closing + 1:]
+            if not suffix or (suffix.startswith(":") and suffix[1:].isdigit()):
+                port = suffix[1:] or None
+                host = host[1:closing]
+        elif host.count(":") == 1:
+            candidate, p = host.rsplit(":", 1)
             if p.isdigit():
+                host = candidate
                 port = p
         self.user, self.host, self.port = user, host, port
+        self.ssh_config = os.path.expanduser(ssh_config) if ssh_config else None
         self.use_sudo = use_sudo
         self.ask_pass = ask_pass
         self.ssh_pass_src = ssh_pass_src
@@ -130,12 +138,40 @@ class SshBackend:
         self._sudo_password = None
         self._sudo_needs_pw = None
         self._tmpdir = None
+        self._target_resolved = user is not None
 
     def _target(self):
-        return f"{self.user}@{self.host}"
+        if not self._target_resolved:
+            if not self._has_ssh_profile():
+                self.user = "root"
+            self._target_resolved = True
+        return f"{self.user}@{self.host}" if self.user else self.host
+
+    def _has_ssh_profile(self):
+        """Ask OpenSSH which Host blocks match, including wildcard/Include rules.
+
+        -G does not connect. Its verbose diagnostics identify applied Host
+        patterns; a bare Host * is defaults, not a host-specific profile.
+        Do not infer presence from the resolved user: a profile can omit User
+        or explicitly use the local username.
+        """
+        result = subprocess.run(
+            ["ssh", "-G", "-v"] + self._ssh_options() + [self.host],
+            capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(_t("err_ssh_config", err=result.stderr.strip()))
+        patterns = re.findall(r"^debug1: .* Applying options for (.+)$",
+                              result.stderr, re.MULTILINE)
+        return any(pattern.strip() != "*" for pattern in patterns)
+
+    def _ssh_options(self):
+        # Leave config interpretation (Host/Match/Include/ProxyJump) to OpenSSH.
+        return ((["-F", self.ssh_config] if self.ssh_config else [])
+                + (["-p", self.port] if self.port else []))
 
     def _ssh_invocation(self):
-        return ["ssh", "-o", "ControlPath=" + self._master, self._target()]
+        return (["ssh"] + self._ssh_options()
+                + ["-o", "ControlPath=" + self._master, self._target()])
 
     def _exec(self, remote, stdin=None, check=True):
         full = self._ssh_invocation() + [remote]
@@ -149,10 +185,9 @@ class SshBackend:
             os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"awgctl-{os.getpid()}")
         os.makedirs(self._tmpdir, mode=0o700, exist_ok=True)
         self._master = os.path.join(self._tmpdir, "cm.sock")
-        common = (["-fN", "-M", "-S", self._master,
+        common = (self._ssh_options() + ["-fN", "-M", "-S", self._master,
                    "-o", "ControlPersist=60", "-o", "ConnectTimeout=10",
-                   "-o", "StrictHostKeyChecking=accept-new"]
-                  + (["-p", self.port] if self.port else []))
+                   "-o", "StrictHostKeyChecking=accept-new"])
         r = subprocess.run(
             ["ssh"] + common + ["-o", "BatchMode=yes", self._target()],
             capture_output=True, text=True)
@@ -182,7 +217,8 @@ class SshBackend:
 
     def _cleanup(self):
         if self._master and os.path.exists(self._master):
-            subprocess.run(["ssh", "-o", "ControlPath=" + self._master,
+            subprocess.run(["ssh"] + self._ssh_options()
+                           + ["-o", "ControlPath=" + self._master,
                             "-O", "exit", self._target()],
                            capture_output=True, text=True)
         if self._tmpdir and os.path.isdir(self._tmpdir):

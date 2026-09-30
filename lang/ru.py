@@ -3,11 +3,14 @@ MESSAGES = {
     "description": "Управление клиентами AmneziaWG в серверном конфиге.",
     "epilog": (
         "Команду можно сокращать префиксом (a=add, i=init, l=list, g=get; для "
-        "неоднозначных: del/def, res/rek, se/sh). "
+        "неоднозначных: del/def, res/rek/ren, se/sh). "
         "Глобальная команда: configs. Help по команде: awgctl <команда> -h."
     ),
     "conn_group": "опции подключения (глобальные)",
     "help_ssh": "работать с конфигом на удалённом сервере по SSH (read/write/restart там же)",
+    "help_ssh_config": "файл настроек OpenSSH (-F); нужен --ssh; по умолчанию обычный SSH-конфиг",
+    "err_ssh_config_without_ssh": "Ошибка: --ssh-config требует --ssh.",
+    "err_ssh_config": "Ошибка чтения SSH-конфига: {err}",
     "help_sudo": "выполнять привилегированные команды на сервере через sudo",
     "help_ask_pass": "спросить SSH-пароль, если ключ не подошёл",
     "help_ssh_pass": "источник SSH-пароля без промпта: fd:N или env:VAR",
@@ -50,6 +53,12 @@ MESSAGES = {
         "  awgctl awg0 add phone --dns '10.0.0.1' --endpoint vpn:51820"
     ),
     "help_name": "имя клиента",
+    "help_new_name": "новое имя клиента (буквы, цифры, подчёркивания, точки, дефисы)",
+    "rename_help": "переименовать клиента",
+    "rename_desc": "Изменить имя клиента с сохранением ключей, IP и настроек peer. Перезапуск туннеля и новый клиентский конфиг не нужны. Новое имя должно быть свободным.",
+    "rename_epilog": "Пример:\n  awgctl awg0 rename client-10-0-0-2 phone",
+    "info_renamed": "Клиент '{name}' переименован в '{new_name}'.",
+    "info_name_unchanged": "Клиент '{name}' уже носит это имя; изменений нет.",
     "help_client_allow": "AllowedIPs в серверном [Peer] (сети за клиентом, для VPN-gateway), по умолчанию IP клиента с /32",
     "help_client_routes": "AllowedIPs в клиентском конфиге (что клиент гонит через VPN), по умолчанию — из дефолтов конфига",
     "help_keepalive": "PersistentKeepalive, по умолчанию — из дефолтов конфига",

@@ -5,9 +5,13 @@ AWGCTL_LANG ?= en
 BUILD_DIR    = build
 TARGET       = $(BUILD_DIR)/awgctl
 
-.PHONY: all build install uninstall clean
+.PHONY: all build test install uninstall clean
 
 all: build
+
+test:
+	# Local automated tests only; server_smoke.py is optional and manual.
+	python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 build:
 	@mkdir -p $(BUILD_DIR)

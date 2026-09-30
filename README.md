@@ -46,7 +46,7 @@ awgctl <config> <command> [arguments] [options]
 
 `<config>` — path to the config **or** short name: `awg0` expands to `/etc/amnezia/amneziawg/awg0.conf` (the `.conf` extension is added automatically). For example: `awgctl.py awg0 list`, `awgctl.py awg0 add ivan`.
 
-Commands follow the `ip` style — abbreviated to any unambiguous prefix (`a`=add, `g`=get, `l`=list, `i`=init; for `d`-/`r`-/`s`-commands a distinguishing prefix is needed: `del`/`def`=defaults, `res`=restart, `rek`=rekey, `se`=set, `sh`=show):
+Commands follow the `ip` style — abbreviated to any unambiguous prefix (`a`=add, `g`=get, `l`=list, `i`=init; for `d`-/`r`-/`s`-commands a distinguishing prefix is needed: `del`/`def`=defaults, `res`=restart, `rek`=rekey, `ren`=rename, `se`=set, `sh`=show):
 
 Detailed help per command — `awgctl.py <command> -h` (config can be omitted, e.g. `awgctl.py add -h`).
 
@@ -64,9 +64,10 @@ Detailed help per command — `awgctl.py <command> -h` (config can be omitted, e
   - `--keepalive=<n>` — PersistentKeepalive (in client config), default — from config defaults.
   - `--dns=<list>` — client DNS, default — from config defaults.
   - `--endpoint=<host:port>` — custom client endpoint (full host:port, fixed for the client). If not specified — endpoint is **dynamic**: built from default host in section + actual server `ListenPort` on each issuance.
-  - `--ssh=<host>` — generate keys on root@HOST if `awg`/`wg` is not available locally.
+  - `--ssh=<host>` — operate on the remote server, including key generation.
 - `del <name...> | --all` — delete one or more clients (and their `[Peer]`) or all at once via `--all`.
 - `get <name>` — output saved client config to stdout. If `client_priv` is missing (import without private key), warns and outputs incomplete config — `rekey` needed.
+- `rename <old-name> <new-name>` — rename a client, e.g. `awgctl awg0 rename client-10-0-0-2 phone` (short form: `ren`). Preserves keys, IP and settings; no restart or new client config is needed. New names may contain letters, digits, `_`, `.` and `-`; existing names are rejected. Renaming to the same name succeeds without writing. Supports `--ssh` and `--sudo`.
 - `rekey <name...> | --all` — rotate keys for one or more clients (new pair + PSK, update `[Peer]` and meta) or all via `--all`. Changes keys — clients need new configs distributed. Makes imported client without a key fully manageable.
 - `set <name...> | --all [options]` — change parameters of existing clients **without key rotation**, with **bulk** support (multiple names or `--all`):
   - `--dns=<list>`, `--routes=<cidr>`, `--keepalive=<n>`, `--host=<host>`, `--endpoint=<host:port>` — affect only the issued client config (`get`);
@@ -102,7 +103,8 @@ For servers shows number of clients (for managed — from AWGCTL zone) or `[Peer
 
 Any command can work with config **on a remote server** — the entire cycle (read, edit, `restart`, key generation) runs there. Connection options are **global**: they can be placed anywhere in command line (before or after command) and with any command, including global `configs` (`awgctl.py --ssh admin@vpn --sudo configs`):
 
-- `--ssh [USER@]HOST[:PORT]` — server (default `USER=root`). Key authentication works natively; if key fails, `--ask-pass` asks for SSH password (self-contained via `pty`, without `sshpass`/`paramiko`). One connection per process via `ControlMaster`.
+- `--ssh [USER@]HOST[:PORT]` — server or alias from `~/.ssh/config`. OpenSSH resolves the user and port; explicit `USER` and `PORT` override config values. A matching `Host` profile uses OpenSSH settings (including the local username if the profile omits `User`); without a matching profile, the utility uses `root@HOST`. Key authentication works natively; if key fails, `--ask-pass` asks for SSH password (self-contained via `pty`, without `sshpass`/`paramiko`). One connection per process via `ControlMaster`.
+- `--ssh-config PATH` — use a local OpenSSH config file (`ssh -F PATH`); requires `--ssh`. Otherwise OpenSSH reads its normal user and system configuration.
 - `--sudo` — privileged commands on server via `sudo` (passwordless `-n` or `-S` with password; password is reused from SSH password or requested separately). Passwords are not written to disk.
 - `--ask-pass` — ask for SSH password if key didn't work.
 
@@ -114,6 +116,26 @@ awgctl.py awg0.conf init --host vpn.example.com --ssh admin@vpn:22 --sudo -r
 ```
 
 Remote write is atomic (`base64 | tee` + `mv`), with `.bak` backup; locking on server — via `mkdir <config>.lockd` (survives individual ssh calls).
+
+Example `~/.ssh/config`:
+
+```sshconfig
+Host vpn
+    HostName vpn.example.com
+    User admin
+    Port 2222
+    IdentityFile ~/.ssh/vpn_ed25519
+    # ProxyJump bastion
+```
+
+```bash
+awgctl awg0 list --ssh vpn --sudo
+awgctl awg0 list --ssh vpn --ssh-config ./ssh.conf --sudo
+awgctl awg0 list --ssh root@vpn:2200
+```
+
+OpenSSH handles `Host`, `Include`, `IdentityFile`, `ProxyJump` and other connection settings. The `--ssh-config` file is local.
+Profile detection uses `ssh -G -v` without connecting and respects `Include`, `Host` patterns and exclusions. A generic `Host *` block is defaults, not a separate profile: unknown hosts still use root. An explicit user (`--ssh admin@vpn`) always wins. Configuration errors stop the operation rather than silently falling back to root.
 
 ### Non-Interactive Mode (`--batch`) — for software integration
 
@@ -158,3 +180,36 @@ The server config contains **private keys** (server and clients), and the interf
 ### IPv6 Address Space Protection
 
 Client IPs are allocated from the **IPv4** subnet of the server: if `Address` has both IPv4 and IPv6, IPv4 is chosen for allocation (iterating hosts in IPv6 `/64` = 2^64 is meaningless). Address iteration is limited from above (`MAX_IP_SCAN`) to avoid hanging on giant spaces.
+
+## Tests
+
+```bash
+make test
+```
+
+Tests use stdlib, temporary files and a fake key generator; no root, network
+or installed `awg` is required. They cover both builds (en/ru), client lifecycle,
+imports, failure atomicity, JSON, SSH configuration, sudo, locks and backups.
+`show` and `restart` use mocked system calls; no real tunnel is restarted.
+OpenSSH `ssh -G` checks are skipped if SSH is unavailable.
+
+### Optional smoke test (manual only)
+
+`tests/server_smoke.py` is an **optional** real-server check. It is excluded
+from `make test` and automatic `unittest` discovery, never runs during builds,
+and is not required before a commit. Run it only with the explicit command
+below. For normal development, `make test` is sufficient.
+
+Real-server checks are explicitly **read-only**: `configs`, `init --dry --json`,
+`list` for managed configs and `show` for active interfaces. Config checksums
+are compared before and after each check.
+
+```bash
+make
+python3 tests/server_smoke.py --ssh awg-test --ssh-config /tmp/ssh_config
+```
+
+Use `--directory /path/to/configs` if needed. `--sudo` is opt-in. Key-based
+noninteractive authentication is required (`--batch`). In restricted environments,
+set `XDG_RUNTIME_DIR=/tmp` for the local SSH socket. The script never prints
+client private keys or PSKs.

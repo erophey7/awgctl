@@ -5,7 +5,7 @@ import sys
 BEGIN = "# === AWGCTL-CLIENTS-BEGIN ==="
 END = "# === AWGCTL-CLIENTS-END ==="
 
-COMMANDS = ("init", "list", "add", "del", "get", "rekey", "restart",
+COMMANDS = ("init", "list", "add", "del", "get", "rekey", "rename", "restart",
             "set", "defaults", "show")
 # глобальные команды: не привязаны к одному конфигу (config-слот не нужен)
 GLOBAL_COMMANDS = ("configs",)

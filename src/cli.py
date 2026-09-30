@@ -12,7 +12,7 @@ from .backend import BACKEND, SshBackend
 from .commands import (
     cmd_init, cmd_list, cmd_add, cmd_del, cmd_get,
     cmd_rekey, cmd_set, cmd_defaults, cmd_show,
-    cmd_restart, cmd_configs
+    cmd_restart, cmd_configs, cmd_rename
 )
 from .utils import warn_config_perms
 
@@ -67,6 +67,8 @@ def _make_conn_parent():
     g = conn_opt.add_argument_group(_t("conn_group"))
     g.add_argument("--ssh", metavar="[USER@]HOST[:PORT]", default=None,
                    help=_t("help_ssh"))
+    g.add_argument("--ssh-config", metavar="PATH", default=None,
+                   help=_t("help_ssh_config"))
     g.add_argument("--sudo", action="store_true", help=_t("help_sudo"))
     g.add_argument("--ask-pass", dest="ask_pass", action="store_true",
                    help=_t("help_ask_pass"))
@@ -150,6 +152,12 @@ def build_parser():
     sp.add_argument("--json", action="store_true", help=_t("help_json"))
 
     sp = sub.add_parser(
+        "rename", formatter_class=_RAW, help=_t("rename_help"),
+        description=_t("rename_desc"), epilog=_t("rename_epilog"))
+    sp.add_argument("name", metavar="OLD", help=_t("help_name"))
+    sp.add_argument("new_name", metavar="NEW", help=_t("help_new_name"))
+
+    sp = sub.add_parser(
         "rekey", parents=[restart_opt], formatter_class=_RAW,
         help=_t("rekey_help"), description=_t("rekey_desc"),
         epilog=_t("rekey_epilog"))
@@ -218,12 +226,16 @@ def _run_configs(argv):
 def main():
     argv = sys.argv[1:]
     conn, argv = _extract_conn(argv)
+    if conn.ssh_config and not conn.ssh:
+        print(_t("err_ssh_config_without_ssh"), file=sys.stderr)
+        sys.exit(2)
     set_batch(conn.batch)
     if conn.ssh:
         backend = SshBackend(conn.ssh, use_sudo=conn.sudo,
                              ask_pass=conn.ask_pass,
                              ssh_pass_src=conn.ssh_pass,
-                             sudo_pass_src=conn.sudo_pass)
+                             sudo_pass_src=conn.sudo_pass,
+                             ssh_config=conn.ssh_config)
         BACKEND.__class__ = SshBackend
         BACKEND.__dict__.update(backend.__dict__)
 
@@ -269,6 +281,8 @@ def main():
         cmd_del(args.config, args.names, all_clients=args.all_clients)
     elif cmd == "get":
         cmd_get(args.config, args.name, json_out=args.json)
+    elif cmd == "rename":
+        cmd_rename(args.config, args.name, args.new_name)
     elif cmd == "rekey":
         if not args.names and not args.all_clients:
             print(_t("err_no_names"), file=sys.stderr)

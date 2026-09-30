@@ -1,4 +1,4 @@
-"""All awgctl commands: init, list, add, del, get, rekey, set, defaults, show, restart, configs."""
+"""All awgctl commands: init, list, add, del, get, rename, rekey, set, defaults, show, restart, configs."""
 
 import ipaddress
 import json
@@ -658,6 +658,38 @@ def _cmd_del_locked(cfg_path, names, all_clients):
     write_config(cfg_path, lines)
     for n in targets:
         print(_t("info_deleted", name=n))
+
+
+# ---------------------------------------------------------------------------
+# rename
+# ---------------------------------------------------------------------------
+def cmd_rename(cfg_path, name, new_name):
+    """Rename only the metadata field, preserving peer lines and other fields."""
+    if not re.fullmatch(r"[\w.-]+", new_name):
+        print(_t("err_invalid_name"), file=sys.stderr)
+        sys.exit(1)
+    with config_lock(cfg_path):
+        lines = read_config(cfg_path)
+        start, end = find_ctl_region(lines)
+        if start is None or end is None:
+            print(_t("err_no_markup"), file=sys.stderr)
+            sys.exit(1)
+        _resolve_targets(lines, [name], False)
+        if name == new_name:
+            print(_t("info_name_unchanged", name=name))
+            return
+        if new_name in _region_client_names(lines):
+            print(_t("err_exists", name=new_name), file=sys.stderr)
+            sys.exit(1)
+        for i in range(start + 1, end):
+            meta = parse_meta(lines[i])
+            if meta and meta.get("name") == name:
+                # Preserve unknown metadata fields and all original formatting.
+                lines[i] = re.sub(
+                    r"(\|\s*name\s*=\s*)[^|]*?(\s*)(?=\|)",
+                    lambda m: m[1] + new_name + m[2], lines[i])
+        write_config(cfg_path, lines)
+    print(_t("info_renamed", name=name, new_name=new_name))
 
 
 # ---------------------------------------------------------------------------
